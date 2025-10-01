@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🚗 Traffic Congestion Predictor (Random Forest)</title>
+  <link rel="stylesheet" href="/static/traffic_style.css" />
+</head>
+<body>
+  <!-- Background Effects -->
+  <div class="fx fx-noise" aria-hidden="true"></div>
+  <div class="fx fx-vignette" aria-hidden="true"></div>
+  
+  <!-- Traffic Mode Layers -->
+  <div class="traffic sky traffic-gradient" aria-hidden="true"></div>
+  <div class="traffic road-lines" aria-hidden="true"></div>
+  <div class="traffic vehicles" aria-hidden="true"></div>
+  <div class="traffic congestion-overlay" aria-hidden="true"></div>
+
+  <!-- Main Container -->
+  <section class="panel hero" id="hero">
+    <div class="brand">
+      <div class="logo">🚗</div>
+      <div class="title">
+        <h1>Traffic Congestion Predictor</h1>
+        <p>ระบบพยากรณ์การจราจรติด/ไม่ติด (Random Forest Model)</p>
+      </div>
+    </div>
+    <div class="model-info">
+      <span class="model-badge">🌲 Random Forest</span>
+    </div>
+  </section>
+
+  <!-- Excel Upload Section -->
+  <section class="panel panel--compact">
+    <h3 class="section-title">📊 อัปโหลดไฟล์ Excel (ประมวลผลแบบ Batch)</h3>
+    <form id="excel-upload-form" enctype="multipart/form-data" class="upload-inline">
+      <label class="file-input-label">
+        <input type="file" id="excel-file" accept=".xlsx,.xls" required>
+        <span class="file-icon">📁</span>
+        <span class="file-text">เลือกไฟล์ Excel</span>
+      </label>
+      <button type="submit" class="btn primary">🚀 ประมวลผลข้อมูล</button>
+    </form>
+    <div id="upload-result" class="upload-result"></div>
+  </section>
+
+  <!-- Main Prediction Section -->
+  <section class="panel grid layout-two-cols">
+    <form id="predict-form" class="card form">
+      <h3 class="section-title">ใส่ข้อมูลการจราจร</h3>
+      <div class="grid2">
+        <label>Latitude <input type="number" step="any" id="latitude" value="13.7563"></label>
+        <label>Longitude <input type="number" step="any" id="longitude" value="100.5018"></label>
+        <label>ความหนาแน่น (density) <input type="number" step="any" id="density" value="50"></label>
+        <label>ปริมาณการจราจร (volume) <input type="number" step="any" id="volume" value="1500"></label>
+        <label>ความจุถนน (capacity) <input type="number" step="any" id="capacity" value="2000"></label>
+        <label>ชั่วโมง (hour) <input type="number" min="0" max="23" id="hour" value="8"></label>
+        <label>ความเร็ว (speed km/h) <input type="number" step="any" id="speed" value="45"></label>
+        <label>อัตราส่วน v/c <input type="number" step="any" id="vc_ratio" value="0.75"></label>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn primary">🔮 ทำนายการจราจร</button>
+        <button type="reset" class="btn ghost">🔄 รีเซ็ต</button>
+      </div>
+    </form>
+
+    <div class="card result">
+      <div class="result-header">
+        <span class="badge">ผลลัพธ์</span>
+        <div class="status-dot" id="statusDot"></div>
+      </div>
+      <div id="result" class="result-content">
+        <div class="result-placeholder">[ยังไม่มีผลลัพธ์]</div>
+      </div>
+      <div id="summary" class="summary"></div>
+    </div>
+  </section>
+
+  <script>
+    const resultEl = document.getElementById("result");
+    const summaryEl = document.getElementById("summary");
+    const statusDot = document.getElementById("statusDot");
+    const body = document.body;
+
+    // Submit prediction form
+    document.getElementById("predict-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const payload = {
+        latitude: parseFloat(document.getElementById("latitude").value) || 13.7563,
+        longitude: parseFloat(document.getElementById("longitude").value) || 100.5018,
+        density: parseFloat(document.getElementById("density").value) || 0,
+        volume: parseFloat(document.getElementById("volume").value) || 0,
+        capacity: parseFloat(document.getElementById("capacity").value) || 1,
+        hour: parseInt(document.getElementById("hour").value) || 12,
+        speed: parseFloat(document.getElementById("speed").value) || 0,
+        vc_ratio: parseFloat(document.getElementById("vc_ratio").value) || 0.75
+      };
+
+      statusDot.dataset.state = "loading";
+      resultEl.innerHTML = '<div class="result-placeholder">⏳ กำลังพยากรณ์...</div>';
+      summaryEl.textContent = "";
+
+      try {
+        const res = await fetch("/predict-traffic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          statusDot.dataset.state = "error";
+          resultEl.innerHTML = `<div class="error-message">❌ ${data.error}</div>`;
+          return;
+        }
+
+        statusDot.dataset.state = "ok";
+        
+        // Display results
+        const isCongested = data.traffic_prediction === 1;
+        const isWeekend = data.day_type_prediction === 1;
+        
+        resultEl.innerHTML = `
+          <div class="prediction-result">
+            <div class="prediction-card ${isCongested ? 'congested' : 'free-flow'}">
+              <div class="prediction-icon">${isCongested ? '🚦' : '🟢'}</div>
+              <div class="prediction-text">
+                <h4>${data.traffic_label}</h4>
+                <p>ความน่าจะเป็น: ${data.traffic_probabilities.ไม่ติด} / ${data.traffic_probabilities.ติด}</p>
+              </div>
+            </div>
+            
+            <div class="prediction-card ${isWeekend ? 'weekend' : 'weekday'}">
+              <div class="prediction-icon">${isWeekend ? '🏖️' : '💼'}</div>
+              <div class="prediction-text">
+                <h4>${data.day_type_label}</h4>
+              </div>
+            </div>
+            
+            <div class="criteria-info">
+              <h5>เกณฑ์การประเมิน:</h5>
+              <ul>
+                <li>อัตราส่วน v/c: ${data.vc_ratio.toFixed(3)} ${data.criteria_met.vc_ratio_over_1 ? '✅' : '❌'}</li>
+                <li>ความเร็ว < 20 km/h: ${data.speed} km/h ${data.criteria_met.speed_under_20 ? '✅' : '❌'}</li>
+                <li>สถานะจริง: ${data.actual_congested ? 'ติด' : 'ไม่ติด'}</li>
+              </ul>
+            </div>
+          </div>
+        `;
+
+        // Update background based on traffic condition
+        body.className = isCongested ? 'congested' : 'free-flow';
+
+        let summaryText = `โมเดล: Random Forest | `;
+        summaryText += `v/c = ${data.vc_ratio.toFixed(3)} | `;
+        summaryText += `ความเร็ว = ${data.speed} km/h`;
+        summaryEl.textContent = summaryText;
+
+      } catch (err) {
+        statusDot.dataset.state = "error";
+        resultEl.innerHTML = `<div class="error-message">❌ Network error: ${err.message}</div>`;
+      }
+    });
+
+    // Excel Upload Handler
+    document.getElementById("excel-upload-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      
+      const fileInput = document.getElementById("excel-file");
+      const resultDiv = document.getElementById("upload-result");
+      
+      if (!fileInput.files[0]) {
+        resultDiv.innerHTML = "❌ กรุณาเลือกไฟล์ Excel";
+        return;
+      }
+      
+      const formData = new FormData();
+      formData.append("file", fileInput.files[0]);
+      
+      resultDiv.innerHTML = "⏳ กำลังประมวลผลข้อมูล...";
+      
+      try {
+        const response = await fetch("/upload-traffic-excel", {
+          method: "POST",
+          body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          resultDiv.innerHTML = `❌ เกิดข้อผิดพลาด: ${data.error}`;
+        } else {
+          resultDiv.innerHTML = `
+            <div class="success-message">
+              <h4>✅ ${data.message}</h4>
+              <p>📊 จำนวนแถวทั้งหมด: ${data.total_rows}</p>
+              <p>✅ ประมวลผลสำเร็จ: ${data.successful_predictions}</p>
+              <p>❌ เกิดข้อผิดพลาด: ${data.errors}</p>
+              <a href="${data.download_url}" class="download-btn" download>📥 ดาวน์โหลดผลลัพธ์</a>
+            </div>
+            <div class="preview-results">
+              <h5>ตัวอย่างผลลัพธ์ (10 แถวแรก):</h5>
+              <pre>${JSON.stringify(data.results, null, 2)}</pre>
+            </div>
+          `;
+        }
+      } catch (err) {
+        resultDiv.innerHTML = `❌ เกิดข้อผิดพลาด: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
